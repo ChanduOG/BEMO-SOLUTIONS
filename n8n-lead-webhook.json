@@ -1,0 +1,150 @@
+{
+  "name": "BEMO Website: Discovery call leads",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bemo-lead",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a01",
+      "name": "Website lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "bemo-lead",
+      "notes": "Once the site has its own domain, change Allowed Origins from * to that domain (e.g. https://www.yourdomain.co.za) so only your website can post leads. Copy this node's Production URL into data-endpoint on the form in index.html.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.body.email }}",
+              "rightValue": "^\\S+@\\S+\\.\\S+$",
+              "operator": { "type": "string", "operation": "regex" }
+            },
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.body.name }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a04",
+      "name": "Valid lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a10", "name": "submittedAt", "value": "={{ $json.body.submittedAt || $now.toISO() }}", "type": "string" },
+            { "id": "a1", "name": "name", "value": "={{ $json.body.name }}", "type": "string" },
+            { "id": "a2", "name": "email", "value": "={{ $json.body.email }}", "type": "string" },
+            { "id": "a3", "name": "company", "value": "={{ $json.body.company }}", "type": "string" },
+            { "id": "a4", "name": "phone", "value": "={{ $json.body.phone }}", "type": "string" },
+            { "id": "a5", "name": "industry", "value": "={{ $json.body.industry }}", "type": "string" },
+            { "id": "a6", "name": "interests", "value": "={{ ($json.body.interests || []).join(', ') }}", "type": "string" },
+            { "id": "a7", "name": "message", "value": "={{ $json.body.message }}", "type": "string" },
+            { "id": "a8", "name": "source", "value": "={{ $json.body.source }}", "type": "string" },
+            { "id": "a11", "name": "page", "value": "={{ $json.body.page }}", "type": "string" },
+            { "id": "a12", "name": "referrer", "value": "={{ $json.body.referrer || '' }}", "type": "string" },
+            { "id": "a9", "name": "utm", "value": "={{ JSON.stringify($json.body.utm || {}) }}", "type": "string" },
+            { "id": "a13", "name": "status", "value": "New", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a02",
+      "name": "Clean lead fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [440, -100]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "url", "value": "" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "Leads" },
+        "columns": { "mappingMode": "autoMapInputData", "value": {} },
+        "options": {}
+      },
+      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a05",
+      "name": "Save to Leads sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [660, -100],
+      "notes": "Connect your Google account, paste the URL of a Google Sheet, and give it a tab called Leads with these headers in row 1: submittedAt, name, email, company, phone, industry, interests, message, source, page, referrer, utm, status",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "sendTo": "2psbuilds@gmail.com",
+        "subject": "=New website lead: {{ $('Clean lead fields').item.json.name }}{{ $('Clean lead fields').item.json.company ? ' (' + $('Clean lead fields').item.json.company + ')' : '' }}",
+        "emailType": "text",
+        "message": "=New discovery call request from the website.\n\nName: {{ $('Clean lead fields').item.json.name }}\nEmail: {{ $('Clean lead fields').item.json.email }}\nCompany: {{ $('Clean lead fields').item.json.company }}\nPhone: {{ $('Clean lead fields').item.json.phone }}\nIndustry: {{ $('Clean lead fields').item.json.industry }}\nInterested in: {{ $('Clean lead fields').item.json.interests }}\n\nWhat's slowing them down:\n{{ $('Clean lead fields').item.json.message }}\n\nSubmitted: {{ $('Clean lead fields').item.json.submittedAt }}\nPage: {{ $('Clean lead fields').item.json.page }}\n\nThe site promises a reply within one business day.",
+        "options": {
+          "replyTo": "={{ $('Clean lead fields').item.json.email }}"
+        }
+      },
+      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a06",
+      "name": "Email me the lead",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [880, -100],
+      "onError": "continueRegularOutput",
+      "notes": "Connect your Gmail account. If this email fails, the lead is still saved and the visitor still sees success.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true }",
+        "options": {}
+      },
+      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a03",
+      "name": "Reply to website",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, -100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": false, \"error\": \"Name and a valid email are required\" }",
+        "options": { "responseCode": 400 }
+      },
+      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a07",
+      "name": "Reject invalid lead",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [440, 120]
+    }
+  ],
+  "connections": {
+    "Website lead": { "main": [[{ "node": "Valid lead?", "type": "main", "index": 0 }]] },
+    "Valid lead?": {
+      "main": [
+        [{ "node": "Clean lead fields", "type": "main", "index": 0 }],
+        [{ "node": "Reject invalid lead", "type": "main", "index": 0 }]
+      ]
+    },
+    "Clean lead fields": { "main": [[{ "node": "Save to Leads sheet", "type": "main", "index": 0 }]] },
+    "Save to Leads sheet": { "main": [[{ "node": "Email me the lead", "type": "main", "index": 0 }]] },
+    "Email me the lead": { "main": [[{ "node": "Reply to website", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
