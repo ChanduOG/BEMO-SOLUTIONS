@@ -1267,12 +1267,12 @@ section[id]:not([data-sc-act="pin"]):not([data-sc-act="pan"]){scroll-margin-top:
     <div class="reveal">
       <!--
         CONNECT THE FORM:
-        data-endpoint = a Formspree form URL (https://formspree.io/f/xxxxxxx) for now,
-                        later your own webhook URL (any URL that accepts a JSON POST works)
+        data-endpoint = your n8n webhook Production URL (https://…/webhook/bemo-lead), see N8N-SETUP.md.
+                        (apps-script/ is a hosting-free alternative using the same request format.)
         data-email    = fallback address shown on errors / used if no endpoint is set
       -->
       <form class="lead-form" id="leadForm" novalidate
-            data-endpoint=""
+            data-endpoint="https://compuden-bokang.app.n8n.cloud/webhook/bemo-lead"
             data-email="2psbuilds@gmail.com">
         <div id="formFields">
           <h3>Book your free discovery call</h3>
@@ -1611,7 +1611,7 @@ document.querySelectorAll('[data-industry]').forEach(a => a.addEventListener('cl
   document.getElementById('industry').value = a.dataset.industry;
 }));
 
-// Lead form: POSTs JSON to the URL in the form's data-endpoint attribute (e.g. Formspree or your own webhook).
+// Lead form: POSTs JSON to the URL in the form's data-endpoint attribute (n8n webhook; see N8N-SETUP.md).
 // If no endpoint is set but data-email is, it falls back to opening the visitor's email app.
 const form = document.getElementById('leadForm');
 const submitBtn = form.querySelector('button[type="submit"]');
@@ -1675,11 +1675,15 @@ form.addEventListener('submit', async e => {
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+      // text/plain keeps this a "simple" cross-site request (no CORS preflight), which n8n webhooks don't reliably answer.
+      // The body is still JSON; the script parses it.
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
       body: JSON.stringify(lead),
       signal: ctrl.signal
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
+    const reply = await res.json().catch(() => ({}));
+    if (reply.ok === false) throw new Error(reply.error || 'Rejected');
     success();
     if (window.dataLayer) window.dataLayer.push({event: 'generate_lead', form: 'discovery_call'});
   } catch (err) {

@@ -1,150 +1,606 @@
 {
-  "name": "BEMO Website: Discovery call leads",
+  "name": "BEMO: Website leads + Operations OS sync",
   "nodes": [
     {
+      "id": "b3e1a7c0-0001-4a1e-9a51-000000000001",
+      "name": "Website & CRM requests",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "bemo-lead",
       "parameters": {
         "httpMethod": "POST",
         "path": "bemo-lead",
         "responseMode": "responseNode",
         "options": {
-          "allowedOrigins": "*"
+          "allowedOrigins": "*",
+          "rawBody": true
         }
       },
-      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a01",
-      "name": "Website lead",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [0, 0],
-      "webhookId": "bemo-lead",
-      "notes": "Once the site has its own domain, change Allowed Origins from * to that domain (e.g. https://www.yourdomain.co.za) so only your website can post leads. Copy this node's Production URL into data-endpoint on the form in index.html.",
+      "notes": "One URL for both: the website form posts leads here, and the Operations OS posts {action:'list', key} here to sync. Copy the PRODUCTION URL into the form's data-endpoint AND the CRM's Website connection. Keep Allowed Origins as * : the CRM runs from a local file. The lead list is protected by the CRM key instead.",
       "notesInFlow": true
     },
     {
+      "id": "b3e1a7c0-0002-4a1e-9a51-000000000002",
+      "name": "Read & check request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ],
       "parameters": {
-        "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
-          "conditions": [
-            {
-              "id": "c1",
-              "leftValue": "={{ $json.body.email }}",
-              "rightValue": "^\\S+@\\S+\\.\\S+$",
-              "operator": { "type": "string", "operation": "regex" }
-            },
-            {
-              "id": "c2",
-              "leftValue": "={{ $json.body.name }}",
-              "rightValue": "",
-              "operator": { "type": "string", "operation": "notEmpty", "singleValue": true }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ── Set this once ─────────────────────────────────────────────────────────────\n// A long random secret (20+ characters). Paste the SAME value into the Operations OS:\n// Intake Inbox › plug icon (Website connection) › CRM key.\n// Until you change it, the CRM can't read leads (the website form still works).\nconst CRM_KEY = 'PASTE-A-LONG-RANDOM-KEY-HERE';\n// ──────────────────────────────────────────────────────────────────────────────\n\n// The website and CRM send JSON as text/plain (avoids a CORS preflight), so the\n// body can arrive parsed, as a string, or as raw binary. Handle all three.\nconst item = $input.first();\nlet b = item.json.body;\nif (typeof b === 'string') { try { b = JSON.parse(b); } catch (e) { b = {}; } }\nif ((!b || typeof b !== 'object' || !Object.keys(b).length) && item.binary && item.binary.data) {\n  try { b = JSON.parse((await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8')); } catch (e) { b = {}; }\n}\nb = b && typeof b === 'object' ? b : {};\n\nconst clean = (v, max) => String(v ?? '').replace(/\\u0000/g, '').trim().slice(0, max);\n\n// The CRM asking for the lead list\nif (b.action === 'list') {\n  const ok = CRM_KEY.length >= 20 && !CRM_KEY.startsWith('PASTE') && String(b.key || '') === CRM_KEY;\n  return [{ json: { route: ok ? 'list' : 'denied' } }];\n}\n\n// The website form\nif (b.website) return [{ json: { route: 'bot' } }];               // honeypot filled\nconst name = clean(b.name, 120), email = clean(b.email, 160);\nif (!name || !/^\\S+@\\S+\\.\\S+$/.test(email)) return [{ json: { route: 'invalid' } }];\n\nconst d = new Date(b.submittedAt || Date.now());\nconst interests = (Array.isArray(b.interests) ? b.interests : String(b.interests || '').split(','))\n  .map(s => clean(s, 40)).filter(Boolean);\nreturn [{ json: {\n  route: 'lead',\n  submittedAt: isNaN(d) ? new Date().toISOString() : d.toISOString(),\n  name, email,\n  company: clean(b.company, 160),\n  phone: clean(b.phone, 40),\n  industry: clean(b.industry, 60),\n  interests: interests.join(', '),\n  message: clean(b.message, 4000),\n  source: clean(b.source, 80),\n  page: clean(b.page, 500),\n  referrer: clean(b.referrer, 500),\n  utm: JSON.stringify(b.utm && typeof b.utm === 'object' ? b.utm : {}).slice(0, 500),\n  status: 'New',\n  firstName: name.split(' ')[0]\n} }];"
       },
-      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a04",
-      "name": "Valid lead?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [220, 0]
+      "notes": "Set CRM_KEY at the top of the code.",
+      "notesInFlow": true
     },
     {
+      "id": "b3e1a7c0-0003-4a1e-9a51-000000000003",
+      "name": "Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        440,
+        200
+      ],
       "parameters": {
-        "assignments": {
-          "assignments": [
-            { "id": "a10", "name": "submittedAt", "value": "={{ $json.body.submittedAt || $now.toISO() }}", "type": "string" },
-            { "id": "a1", "name": "name", "value": "={{ $json.body.name }}", "type": "string" },
-            { "id": "a2", "name": "email", "value": "={{ $json.body.email }}", "type": "string" },
-            { "id": "a3", "name": "company", "value": "={{ $json.body.company }}", "type": "string" },
-            { "id": "a4", "name": "phone", "value": "={{ $json.body.phone }}", "type": "string" },
-            { "id": "a5", "name": "industry", "value": "={{ $json.body.industry }}", "type": "string" },
-            { "id": "a6", "name": "interests", "value": "={{ ($json.body.interests || []).join(', ') }}", "type": "string" },
-            { "id": "a7", "name": "message", "value": "={{ $json.body.message }}", "type": "string" },
-            { "id": "a8", "name": "source", "value": "={{ $json.body.source }}", "type": "string" },
-            { "id": "a11", "name": "page", "value": "={{ $json.body.page }}", "type": "string" },
-            { "id": "a12", "name": "referrer", "value": "={{ $json.body.referrer || '' }}", "type": "string" },
-            { "id": "a9", "name": "utm", "value": "={{ JSON.stringify($json.body.utm || {}) }}", "type": "string" },
-            { "id": "a13", "name": "status", "value": "New", "type": "string" }
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-lead",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "lead",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "New lead"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-list",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "list",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CRM sync"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-denied",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "denied",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Wrong key"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-invalid",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "invalid",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Invalid"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-bot",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "bot",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Bot"
+            }
           ]
         },
         "options": {}
-      },
-      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a02",
-      "name": "Clean lead fields",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [440, -100]
+      }
     },
     {
+      "id": "b3e1a7c0-0004-4a1e-9a51-000000000004",
+      "name": "Sheet row",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        700,
+        -80
+      ],
       "parameters": {
-        "operation": "append",
-        "documentId": { "__rl": true, "mode": "url", "value": "" },
-        "sheetName": { "__rl": true, "mode": "name", "value": "Leads" },
-        "columns": { "mappingMode": "autoMapInputData", "value": {} },
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s-submittedAt",
+              "name": "submittedAt",
+              "value": "={{ $json.submittedAt }}",
+              "type": "string"
+            },
+            {
+              "id": "s-name",
+              "name": "name",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "s-email",
+              "name": "email",
+              "value": "={{ $json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "s-company",
+              "name": "company",
+              "value": "={{ $json.company }}",
+              "type": "string"
+            },
+            {
+              "id": "s-phone",
+              "name": "phone",
+              "value": "={{ $json.phone }}",
+              "type": "string"
+            },
+            {
+              "id": "s-industry",
+              "name": "industry",
+              "value": "={{ $json.industry }}",
+              "type": "string"
+            },
+            {
+              "id": "s-interests",
+              "name": "interests",
+              "value": "={{ $json.interests }}",
+              "type": "string"
+            },
+            {
+              "id": "s-message",
+              "name": "message",
+              "value": "={{ $json.message }}",
+              "type": "string"
+            },
+            {
+              "id": "s-source",
+              "name": "source",
+              "value": "={{ $json.source }}",
+              "type": "string"
+            },
+            {
+              "id": "s-page",
+              "name": "page",
+              "value": "={{ $json.page }}",
+              "type": "string"
+            },
+            {
+              "id": "s-referrer",
+              "name": "referrer",
+              "value": "={{ $json.referrer }}",
+              "type": "string"
+            },
+            {
+              "id": "s-utm",
+              "name": "utm",
+              "value": "={{ $json.utm }}",
+              "type": "string"
+            },
+            {
+              "id": "s-status",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            }
+          ]
+        },
         "options": {}
-      },
-      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a05",
+      }
+    },
+    {
+      "id": "b3e1a7c0-0005-4a1e-9a51-000000000005",
       "name": "Save to Leads sheet",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
-      "position": [660, -100],
-      "notes": "Connect your Google account, paste the URL of a Google Sheet, and give it a tab called Leads with these headers in row 1: submittedAt, name, email, company, phone, industry, interests, message, source, page, referrer, utm, status",
+      "position": [
+        920,
+        -80
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "notes": "Connect Google and paste the sheet URL. Tab 'Leads', row 1 headers: submittedAt, name, email, company, phone, industry, interests, message, source, page, referrer, utm, status. RAW keeps phone zeros and stops formulas.",
       "notesInFlow": true
     },
     {
-      "parameters": {
-        "sendTo": "2psbuilds@gmail.com",
-        "subject": "=New website lead: {{ $('Clean lead fields').item.json.name }}{{ $('Clean lead fields').item.json.company ? ' (' + $('Clean lead fields').item.json.company + ')' : '' }}",
-        "emailType": "text",
-        "message": "=New discovery call request from the website.\n\nName: {{ $('Clean lead fields').item.json.name }}\nEmail: {{ $('Clean lead fields').item.json.email }}\nCompany: {{ $('Clean lead fields').item.json.company }}\nPhone: {{ $('Clean lead fields').item.json.phone }}\nIndustry: {{ $('Clean lead fields').item.json.industry }}\nInterested in: {{ $('Clean lead fields').item.json.interests }}\n\nWhat's slowing them down:\n{{ $('Clean lead fields').item.json.message }}\n\nSubmitted: {{ $('Clean lead fields').item.json.submittedAt }}\nPage: {{ $('Clean lead fields').item.json.page }}\n\nThe site promises a reply within one business day.",
-        "options": {
-          "replyTo": "={{ $('Clean lead fields').item.json.email }}"
-        }
-      },
-      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a06",
+      "id": "b3e1a7c0-0006-4a1e-9a51-000000000006",
       "name": "Email me the lead",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
-      "position": [880, -100],
+      "position": [
+        1140,
+        -80
+      ],
       "onError": "continueRegularOutput",
-      "notes": "Connect your Gmail account. If this email fails, the lead is still saved and the visitor still sees success.",
+      "parameters": {
+        "sendTo": "2psbuilds@gmail.com",
+        "subject": "=New website lead: {{ $('Sheet row').item.json.name }}{{ $('Sheet row').item.json.company ? ' (' + $('Sheet row').item.json.company + ')' : '' }}",
+        "emailType": "text",
+        "message": "=New discovery call request from the website.\n\nName: {{ $('Sheet row').item.json.name }}\nEmail: {{ $('Sheet row').item.json.email }}\nCompany: {{ $('Sheet row').item.json.company }}\nPhone: {{ $('Sheet row').item.json.phone }}\nIndustry: {{ $('Sheet row').item.json.industry }}\nInterested in: {{ $('Sheet row').item.json.interests }}\n\nWhat's slowing them down:\n{{ $('Sheet row').item.json.message }}\n\nSubmitted: {{ $('Sheet row').item.json.submittedAt }}\nPage: {{ $('Sheet row').item.json.page }}\n\nThe site promises a reply within one business day. This lead appears in the Operations OS inbox on its next sync.",
+        "options": {
+          "replyTo": "={{ $('Sheet row').item.json.email }}",
+          "appendAttribution": false
+        }
+      },
+      "notes": "Connect Gmail. If this fails, the lead is still saved and the visitor still sees success.",
       "notesInFlow": true
     },
     {
+      "id": "b3e1a7c0-0007-4a1e-9a51-000000000007",
+      "name": "Thank the lead (optional)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1360,
+        -80
+      ],
+      "onError": "continueRegularOutput",
+      "disabled": true,
+      "parameters": {
+        "sendTo": "={{ $('Sheet row').item.json.email }}",
+        "subject": "We've got your discovery call request",
+        "emailType": "text",
+        "message": "=Hi {{ $('Read & check request').item.json.firstName }},\n\nThanks for reaching out to BEMO-SOLUTIONS. We've received your request for a free 30-minute discovery call and will be in touch within one business day to find a time that suits you.\n\nIf anything is urgent, just reply to this email.\n\nKind regards,\nBEMO-SOLUTIONS",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "notes": "OFF by default. Turn on to send every lead an instant acknowledgement from your Gmail.",
+      "notesInFlow": true
+    },
+    {
+      "id": "b3e1a7c0-0008-4a1e-9a51-000000000008",
+      "name": "Reply: saved",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1580,
+        -80
+      ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={ \"ok\": true }",
         "options": {}
-      },
-      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a03",
-      "name": "Reply to website",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [1100, -100]
+      }
     },
     {
+      "id": "b3e1a7c0-0009-4a1e-9a51-000000000009",
+      "name": "Read Leads sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        700,
+        120
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "options": {}
+      },
+      "notes": "Same Google account and sheet as 'Save to Leads sheet'.",
+      "notesInFlow": true
+    },
+    {
+      "id": "b3e1a7c0-0010-4a1e-9a51-000000000010",
+      "name": "Build lead list",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        120
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Turn the sheet rows into the list the Operations OS expects. Newest 500 only.\nconst leads = $input.all()\n  .map(i => i.json)\n  .filter(r => r && (r.email || r.name))\n  .map(r => { const o = { ...r }; delete o.row_number; return o; });\nreturn [{ json: { ok: true, count: leads.length, leads: leads.slice(-500) } }];"
+      }
+    },
+    {
+      "id": "b3e1a7c0-0011-4a1e-9a51-000000000011",
+      "name": "Reply: leads",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1140,
+        120
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "b3e1a7c0-0012-4a1e-9a51-000000000012",
+      "name": "Reply: wrong key",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": false, \"error\": \"Wrong or missing key\" }",
+        "options": {}
+      }
+    },
+    {
+      "id": "b3e1a7c0-0013-4a1e-9a51-000000000013",
+      "name": "Reply: invalid lead",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        460
+      ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={ \"ok\": false, \"error\": \"Name and a valid email are required\" }",
-        "options": { "responseCode": 400 }
-      },
-      "id": "6a1f1c1e-0b7a-4b8e-9a51-1f0c2b6d0a07",
-      "name": "Reject invalid lead",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "b3e1a7c0-0014-4a1e-9a51-000000000014",
+      "name": "Reply: ignore bot",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [440, 120]
+      "position": [
+        700,
+        620
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true }",
+        "options": {}
+      }
     }
   ],
   "connections": {
-    "Website lead": { "main": [[{ "node": "Valid lead?", "type": "main", "index": 0 }]] },
-    "Valid lead?": {
+    "Website & CRM requests": {
       "main": [
-        [{ "node": "Clean lead fields", "type": "main", "index": 0 }],
-        [{ "node": "Reject invalid lead", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Read & check request",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Clean lead fields": { "main": [[{ "node": "Save to Leads sheet", "type": "main", "index": 0 }]] },
-    "Save to Leads sheet": { "main": [[{ "node": "Email me the lead", "type": "main", "index": 0 }]] },
-    "Email me the lead": { "main": [[{ "node": "Reply to website", "type": "main", "index": 0 }]] }
+    "Read & check request": {
+      "main": [
+        [
+          {
+            "node": "Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route": {
+      "main": [
+        [
+          {
+            "node": "Sheet row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read Leads sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply: wrong key",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply: invalid lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply: ignore bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheet row": {
+      "main": [
+        [
+          {
+            "node": "Save to Leads sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Leads sheet": {
+      "main": [
+        [
+          {
+            "node": "Email me the lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email me the lead": {
+      "main": [
+        [
+          {
+            "node": "Thank the lead (optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Thank the lead (optional)": {
+      "main": [
+        [
+          {
+            "node": "Reply: saved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Leads sheet": {
+      "main": [
+        [
+          {
+            "node": "Build lead list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build lead list": {
+      "main": [
+        [
+          {
+            "node": "Reply: leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": { "executionOrder": "v1" }
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
 }
